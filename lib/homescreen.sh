@@ -110,23 +110,46 @@ homescreen_apply() {
         log_info "Configurando tela inicial limpa (somente apps) para webOS 10+..."
         overlay_dir="${MOCK_ROOT}/tmp/webos_clean_home"
 
-        # Backup do original
-        if [ -n "$backup_file" ] && [ ! -f "$backup_file" ]; then
+        # Backup do original (nunca copiar o arquivo ja servido pelo overlay)
+        if [ -n "$backup_file" ] && [ ! -s "$backup_file" ]; then
             mkdir -p "$(dirname "$backup_file")" 2>/dev/null || true
+            if [ -z "$MOCK_ROOT" ] && grep -q " $assets_dir " /proc/mounts 2>/dev/null; then
+                umount "$assets_dir" 2>/dev/null || true
+            fi
             cp -p "$home_xml" "$backup_file" 2>/dev/null || true
         fi
 
-        mkdir -p "$overlay_dir/upper" "$overlay_dir/work" 2>/dev/null || true
-        homescreen_build_layout_webos10 "$home_xml" > "$overlay_dir/upper/home.xml"
+        # Fonte pristine: reexecutar com o overlay montado faria o awk ler o
+        # proprio arquivo de saida (truncado) e gerar um home.xml vazio -> Home preta.
+        src_xml="$home_xml"
+        if [ -n "$backup_file" ] && [ -s "$backup_file" ]; then
+            src_xml="$backup_file"
+        fi
 
+        mkdir -p "$overlay_dir/upper" "$overlay_dir/work" 2>/dev/null || true
+        homescreen_build_layout_webos10 "$src_xml" > "$overlay_dir/upper/home.xml"
+        if [ ! -s "$overlay_dir/upper/home.xml" ]; then
+            log_warn "Layout do Home saiu vazio (fonte: $src_xml); abortando sem montar overlay."
+            rm -rf "$overlay_dir" 2>/dev/null || true
+            return 1
+        fi
+
+        applied=1
         if [ -z "$MOCK_ROOT" ] && command -v mount >/dev/null 2>&1; then
+            applied=0
             umount "$assets_dir" 2>/dev/null || true
             if mount -t overlay overlay -o "lowerdir=$assets_dir,upperdir=$overlay_dir/upper,workdir=$overlay_dir/work" "$assets_dir" 2>/dev/null; then
+                applied=1
                 log_ok "OverlayFS montado sobre os assets da tela inicial."
             else
                 log_warn "Falha ao montar overlayfs; tentando bind mount direto..."
-                mount --bind "$overlay_dir/upper/home.xml" "$home_xml" 2>/dev/null || true
+                mount --bind "$overlay_dir/upper/home.xml" "$home_xml" 2>/dev/null && applied=1
             fi
+        fi
+
+        if [ "$applied" != "1" ]; then
+            log_warn "Nao foi possivel aplicar o layout do Home; estado permanente nao gravado."
+            return 1
         fi
 
         if [ "$is_permanent" = "1" ]; then

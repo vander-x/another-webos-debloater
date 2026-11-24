@@ -245,4 +245,21 @@ assert_file_not_exists "Servicos NAO foram mascarados (isolado)" "$MOCK_DIR/run/
 assert_file_not_exists "clean_home removido" "$MOCK_DIR/var/lib/webos-clean/clean_home"
 assert_file_not_exists "Hook de boot removido pois nao ha outros modulos" "$MOCK_DIR/var/lib/webosbrew/init.d/50-webos-clean"
 
+# 7b. Regressao: reaplicar o layout com a Home ja sobreposta nao pode zerar o home.xml
+printf "\n\x1b[1m7b. Reaplicacao do layout nao gera home.xml vazio (regressao):\x1b[0m\n"
+setup_mock_tv
+"$REPO_DIR/bin/webos-clean" --clean-home >/dev/null 2>&1
+HOME_XML="$MOCK_DIR/usr/palm/applications/com.webos.app.home/data/flutter_assets/assets/home.xml"
+BACKUP_XML="$MOCK_DIR/var/lib/webos-clean/backup/home_original.xml"
+assert_file_exists "backup pristine criado" "$BACKUP_XML"
+# Simula o overlay servindo o arquivo vivo truncado (o bug original)
+: > "$HOME_XML"
+"$REPO_DIR/bin/webos-clean" --clean-home >/dev/null 2>&1
+if [ -s "$MOCK_DIR/tmp/webos_clean_home/upper/home.xml" ] && grep -q "appsList" "$MOCK_DIR/tmp/webos_clean_home/upper/home.xml"; then
+    printf "  \033[32m✓\033[0m home.xml reconstruido a partir do backup, nao do arquivo truncado\n"
+else
+    printf "  \033[31m✗\033[0m home.xml saiu vazio/truncado na reaplicacao\n"; exit 1
+fi
+assert_eq "backup segue pristine (ainda tem qcardList)" "1" "$(grep -c 'qcardList' "$BACKUP_XML")"
+
 printf "\n\x1b[1;32m=== TODOS OS TESTES PASSARAM COM SUCESSO! ===\x1b[0m\n\n"
